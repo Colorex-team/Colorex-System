@@ -1,40 +1,58 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { Injectable, Inject } from '@nestjs/common';
 import { HashTagM } from '../../../domains/model/hashtag';
 import { HashTagRepository } from '../../../domains/repositories/hashtag/hashtag.repository';
-import { HashTag } from '../../../infrastructure/entities/hashtag.entity';
-import { Repository } from 'typeorm';
+import { Firestore, FieldValue } from 'firebase-admin/firestore';
+import { firebaseNormalize } from '../../../commons/helper/firebaseNormalize'; 
 
 @Injectable()
-export class HashTagRepositoryOrm implements HashTagRepository {
+export class HashTagRepositoryFirestore implements HashTagRepository {
   constructor(
-    @InjectRepository(HashTag)
-    private readonly hashTagRepository: Repository<HashTag>,
+    @Inject('FIRESTORE') private readonly firestore: Firestore,
   ) {}
-  async createHashtag(name: string): Promise<void> {
-    await this.hashTagRepository.save({ name });
-  }
-  async verifyHashtagAvailability(name: string): Promise<boolean> {
-    const hashtag = await this.hashTagRepository.findOne({
-      where: { name: name },
-    });
-    if (hashtag) return true;
-    return false;
-  }
-  async findHashtagByName(name: string): Promise<HashTagM> {
-    return await this.hashTagRepository.findOne({ where: { name } });
-  }
-  async getPopularHashtags(): Promise<Partial<HashTagM[]>> {
-    const hashtags = await this.hashTagRepository
-    .createQueryBuilder('hashtag')
-    .leftJoin('hashtag.posts', 'post') // Assuming a Many-to-Many relation
-    .select(['hashtag.id', 'hashtag.name'])
-    .addSelect('COUNT(post.id)', 'postCount') // Count how many posts have this hashtag
-    .groupBy('hashtag.id')
-    .orderBy('postCount', 'DESC') // Sort by popularity (most used first)
-    .limit(10)
-    .getRawMany();
 
-    return hashtags;
+  private get collection() {
+    return this.firestore.collection('hashtags');
+  }
+
+  // ✅ Create a new hashtag
+  async createHashtag(name: string): Promise<void> {
+    const docRef = this.collection.doc(); // auto-ID
+    await docRef.set({
+      name,
+      createdAt: FieldValue.serverTimestamp(),
+      postCount: 0,
+      posts : [] as String[]
+    });
+  }
+
+  // ✅ Check if a hashtag with this name already exists
+  async verifyHashtagAvailability(name: string): Promise<boolean> {
+    const snapshot = await this.collection.where('name', '==', name).limit(1).get();
+    return !snapshot.empty; // true if hashtag exists
+  }
+
+  // ✅ Find hashtag by name
+  async findHashtagByName(name: string): Promise<HashTagM | null> {
+    const snapshot = await this.collection.where('name', '==', name).limit(1).get();
+    if (snapshot.empty) return null;
+
+    const doc = snapshot.docs[0];
+    return firebaseNormalize({ id: doc.id, ...doc.data() }) as HashTagM;
+  }
+
+  // ✅ Get most popular hashtags (based on postCount)
+  async getPopularHashtags(): Promise<Partial<HashTagM[]>> {
+    const snapshot = await this.collection
+      .orderBy('postCount', 'desc')
+      .limit(10)
+      .get();
+
+    return firebaseNormalize(snapshot.docs.map(doc => {
+      const data = doc.data() as Omit<HashTagM, 'id'>;
+      return {
+        id: doc.id,
+        ...data,
+      };
+    }));
   }
 }

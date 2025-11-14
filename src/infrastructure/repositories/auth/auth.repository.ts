@@ -1,22 +1,27 @@
-import { Injectable } from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
+import { Inject, Injectable } from "@nestjs/common";
 import { AuthRepository } from "../../../domains/repositories/auth/auth.repository";
-import { Auth } from "../../../infrastructure/entities/auth.entity";
-import { Repository } from "typeorm";
+import { Firestore } from "firebase-admin/firestore";
+import { firebaseNormalize } from '../../../commons/helper/firebaseNormalize'; 
 
 @Injectable()
-export class AuthRepositoryOrm implements AuthRepository {
+export class AuthRepositoryFirebase implements AuthRepository {
   constructor(
-    @InjectRepository(Auth) private readonly authRepository: Repository<Auth>,
+    @Inject('FIRESTORE') private firestore: Firestore,
   ){}
-  async addToken(token: string): Promise<void> {
-    await this.authRepository.save({token});
+
+  private get collection() {
+    return this.firestore.collection('auth');
   }
+
+  async addToken(token: string): Promise<void> {
+    await this.collection.doc(token).set({token});
+  }
+
   async checkTokenAvailability(token: string): Promise<boolean> {
-    const auth = await this.authRepository.findOneBy({token});
-    return auth ? true : false;
+    const doc = await this.collection.doc(token).get();
+    return firebaseNormalize(doc.exists);
   }
   async deleteToken(token: string): Promise<void> {
-    await this.authRepository.delete({token});
+    await this.collection.doc(token).delete();
   }
-}
+} 

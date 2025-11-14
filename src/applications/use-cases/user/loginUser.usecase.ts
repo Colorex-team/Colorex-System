@@ -13,6 +13,7 @@ export class LoginUserUsecase {
 
   async execute(loginDto: LoginDto) {
     const user = await this.userRepository.findUser({ email: loginDto.email });
+    console.log(user)
     if (!user) {
       throw new BadRequestException("Invalid credentials");
     }

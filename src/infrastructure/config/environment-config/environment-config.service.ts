@@ -57,4 +57,16 @@ export class EnvironmentConfigService implements DatabaseConfig {
       ? this.configService.get<string>('DATABASE_PROD_MIGRATIONS_RUN') === 'true'
       : false;
   }
+
+  getFirebaseCredentialJson() : string {
+    return this.isProduction 
+      ? this.configService.get<string>("FIREBASE_PROD_CREDENTIALS")
+      : this.configService.get<string>("FIREBASE_CREDENTIALS") ;
+  }
+
+  getFirebaseStorageBucket() : string {
+    return this.isProduction 
+      ? this.configService.get<string>("FIREBASE_PROD_STORAGE")
+      : this.configService.get<string>("FIREBASE_STORAGE") ;
+  }
 }

@@ -6,14 +6,14 @@ export class PostReplyParamsDto {
         example:'2a047d80-d406-424d-bbfa-adc39e20077b',
         description:'the id of the post'
       })
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
   postId: string
   @ApiProperty({
     example:'2a047d80-d406-424d-bbfa-adc39e20077b',
     description:'the id of the comment'
   })
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
   commentId: string
 }

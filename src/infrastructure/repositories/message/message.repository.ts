@@ -1,44 +1,60 @@
-import { Injectable } from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
+import { Inject, Injectable } from "@nestjs/common";
+import { Firestore } from "firebase-admin/firestore";
 import { MessageM } from "../../../domains/model/message";
 import { MessageRepository } from "../../../domains/repositories/message/message.repository";
-import { Message } from "../../../infrastructure/entities/message.entity";
-import { Repository } from "typeorm";
+import { firebaseNormalize } from '../../../commons/helper/firebaseNormalize'; 
+
 
 @Injectable()
-export class MessageRepositoryOrm implements MessageRepository  {
+export class MessageRepositoryFirebase implements MessageRepository {
   constructor(
-    @InjectRepository(Message) private readonly messageRepository: Repository<Message>,
-  ){}
-  async createMessage(message: Partial<MessageM>): Promise<void> {
-    await this.messageRepository.save(message);
+    @Inject('FIRESTORE') private readonly firestore: Firestore,
+  ) {}
+
+  private get collection() {
+    return this.firestore.collection('messages');
   }
+
+  // ✅ Create a message
+  async createMessage(message: Partial<MessageM>): Promise<void> {
+    const docRef = this.collection.doc(message.id ?? undefined);
+    await docRef.set({
+      ...message,
+      createdAt: new Date(),
+    });
+  }
+
+  // ✅ Get all messages between sender and receiver
   async getMessages(senderId: string, receiverId: string): Promise<MessageM[]> {
-    const messages = await this.messageRepository.find({
-      where: {
-        sender: { id: senderId } ,
-        receiver: { id: receiverId } ,
-    },
-      relations: ['sender', 'receiver'],
-      select: {
-        id: true,
-        content: true,
-        createdAt: true,
-        sender: {
-          username: true,
-          avatarUrl: true,
-          role: true,
-        },
-        receiver: {
-          username: true,
-          avatarUrl: true,
-          role: true,
-        },
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    })
-    return messages
+    // We query for both directions (sender → receiver and receiver → sender)
+    const sentMessagesQuery = this.collection
+      .where('senderId', '==', senderId)
+      .where('receiverId', '==', receiverId);
+
+    const receivedMessagesQuery = this.collection
+      .where('senderId', '==', receiverId)
+      .where('receiverId', '==', senderId);
+
+    const [sentSnap, receivedSnap] = await Promise.all([
+      sentMessagesQuery.get(),
+      receivedMessagesQuery.get(),
+    ]);
+
+    const sentMessages = sentSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as MessageM[];
+
+    const receivedMessages = receivedSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as MessageM[];
+
+    const allMessages = [...sentMessages, ...receivedMessages];
+
+    // Sort descending by createdAt
+    return firebaseNormalize(allMessages.sort(
+      (a, b) => (b.createdAt as any)?.toMillis?.() - (a.createdAt as any)?.toMillis?.()
+    ));
   }
 }

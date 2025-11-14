@@ -15,7 +15,7 @@ export class postMessageParamsDto{
     example: '2a047d80-d406-424d-bbfa-adc39e20077b',
     description: 'The id of the user to send the message to',
   })
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
   receiverId: string;
 }

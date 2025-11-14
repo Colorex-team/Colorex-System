@@ -42,6 +42,7 @@ yarn.lock
 .env.test.local
 .env.production.local
 .env.local
+service_account.json
 
 # Temp directories
 .temp

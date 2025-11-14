@@ -1,14 +1,14 @@
 import { CommentLikeM } from "../../../domains/model/commentLike";
 import { CommentRepository } from "../../../domains/repositories/comment/comment.repository";
 import { UserRepository } from "../../../domains/repositories/user/user.repository";
-import { CommentLikeRepositoryOrm } from "../../../infrastructure/repositories/like/commentLike.repository";
+import { CommentLikeRepositoryFirebase } from "../../../infrastructure/repositories/like/commentLike.repository";
 
 
 export class CommentLikeUsecase {
   constructor(
     private userRepository: UserRepository,
     private commentRepository: CommentRepository,
-    private commentLikeRepository: CommentLikeRepositoryOrm
+    private commentLikeRepository: CommentLikeRepositoryFirebase
   ){}
 
   async execute(commentId: string, userId: string) {

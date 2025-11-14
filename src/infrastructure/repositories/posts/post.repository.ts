@@ -1,424 +1,329 @@
-import {
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { Firestore, FieldValue, Timestamp, QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { PostM } from '../../../domains/model/post';
 import { PostRepository } from '../../../domains/repositories/post/post.repository';
-import { Post } from '../../../infrastructure/entities/post.entity';
-import { Repository } from 'typeorm';
+import { firebaseNormalize } from '../../../commons/helper/firebaseNormalize'; 
+
 
 @Injectable()
-export class PostRepositoryOrm implements PostRepository {
-  constructor(
-    @InjectRepository(Post) private readonly postRepository: Repository<Post>,
-  ) {}
+export class PostRepositoryFirestore implements PostRepository {
+  constructor(@Inject('FIRESTORE') private readonly firestore: Firestore) {}
+
+  private get postsCol() { return this.firestore.collection('posts'); }
+  private get hashtagsCol() { return this.firestore.collection('hashtags'); }
+  private get commentsCol() { return this.firestore.collection('comments'); }
+  private get repliesCol() { return this.firestore.collection('replies'); }
+  private get postLikesCol() { return this.firestore.collection('postLikes'); }
+
+  // Create post: assume `post` includes `user` denormalized summary and hashTagIds or hashTagNames
   async createPost(post: PostM): Promise<void> {
-    const postEntity = this.postRepository.create(post);
-    await this.postRepository.save(postEntity);
+    const now = FieldValue.serverTimestamp();
+    const docRef = this.postsCol.doc(); // auto id
+    const postPayload: any = {
+      ...post,
+      createdAt: now,
+      updatedAt: now,
+      likeCount: 0,
+    };
+
+    // ensure we don't store entities inside Firestore (strip nested classes)
+    delete postPayload.id;
+    // Save post
+    await docRef.set(postPayload);
+
+    // increment postCount for each hashtag if hashtag IDs provided
+    const hashTagIds: string[] = (post.hashTags || []).map((h: any) => h.id).filter(Boolean);
+    const batch = this.firestore.batch();
+    for (const tagId of hashTagIds) {
+      const tagRef = this.hashtagsCol.doc(tagId);
+      batch.update(tagRef, { postCount: FieldValue.increment(1) });
+    }
+    if (hashTagIds.length) await batch.commit();
   }
+
+  // Verify existence
   async verifyPostAvailability(id: string): Promise<boolean> {
-    const post = await this.postRepository.findOneBy({ id });
-    if (!post) {
-      throw new NotFoundException('Post not found');
-    } else {
-      return true;
-    }
-  }
-  async verifyPostOwnership(userId: string, postId: string): Promise<boolean> {
-    const post = await this.postRepository.findOneBy({
-      id: postId,
-      user: { id: userId },
-    });
-    if (!post) {
-      throw new UnauthorizedException(
-        'You are not authorized to perform this action',
-      );
-    }
+    const snap = await this.postsCol.doc(id).get();
+    if (!snap.exists) throw new NotFoundException('Post not found');
     return true;
   }
 
+  // Verify ownership - assumes post.userId stored
+  async verifyPostOwnership(userId: string, postId: string): Promise<boolean> {
+    const snap = await this.postsCol.doc(postId).get();
+    if (!snap.exists) throw new UnauthorizedException('You are not authorized to perform this action');
+    const data = snap.data() as any;
+    if (data.userId !== userId) throw new UnauthorizedException('You are not authorized to perform this action');
+    return true;
+  }
+
+  // Helper: convert Firestore doc -> PostM-like object
+  private docToPost(doc: QueryDocumentSnapshot): PostM {
+    const data = doc.data() as any;
+    return firebaseNormalize({
+      id: doc.id,
+      title: data.title,
+      content: data.content,
+      media_url: data.media_url,
+      post_type: data.post_type,
+      created_at: data.createdAt,
+      updated_at: data.updatedAt,
+      user: data.user || { id: data.userId },
+      hashTags: data.hashTagNames ? data.hashTagNames.map((n: string) => ({ name: n })) : (data.hashTagIds || []).map((id: string) => ({ id })),
+      likeCount: typeof data.likeCount === 'number' ? data.likeCount : 0,
+    }) as any as PostM;
+  }
+
+  // Pagination: cursor-based (preferred). `cursor` is last doc's createdAt ISO or firestore Timestamp, or null to start.
+  // For compatibility with your previous signature (page:number, limit:number) we support naive offset only if page > 0 and no cursor provided.
   async getPaginatedPosts(
     searchQuery: string,
     page: number,
     limit: number,
-  ): Promise<{
-    posts: Partial<PostM[]>;
-    total: number;
-  }> {
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .leftJoinAndSelect('post.hashTags', 'hashTags')
-      .leftJoin('post.postLikes', 'postLikes')
-      .leftJoinAndSelect('post.user', 'user')
-      .addSelect([
-        'user.id',
-        'user.email',
-        'user.username',
-        'user.avatarUrl',
-        'user.role',
-        'user.colorType',
-      ])
-      .addSelect('COUNT(postLikes.id)', 'likeCount')
-      .orderBy('post.created_at', 'DESC');
+    cursor?: { createdAt: FirebaseFirestore.Timestamp; id?: string } | null,
+  ): Promise<{ posts: Partial<PostM[]>; total: number }> {
+    // Build base query
+    let q: FirebaseFirestore.Query = this.postsCol.orderBy('createdAt', 'desc');
 
-    // Add search condition for post title if searchQuery is provided
+    // Search NOTE: Firestore does not support LIKE; you'd need a dedicated search index (Algolia) or store searchable tokens.
+    // Here we do a simple case: if searchQuery exists, filter by exact equality on title lowercase token (if you maintain it).
     if (searchQuery && searchQuery.trim()) {
-      queryBuilder.where('LOWER(post.title) LIKE LOWER(:searchTerm)', {
-        searchTerm: `%${searchQuery.trim()}%`,
-      });
+      // This requires maintaining a `title_lower` or tokens array on the document. If not available, this will be a full collection scan (not recommended).
+      q = q.where('title_lower', '>=', searchQuery.toLowerCase()).where('title_lower', '<=', searchQuery.toLowerCase() + '\uf8ff');
     }
 
-    // Get total count before pagination
-    const total = await queryBuilder.getCount();
+    // Cursor support
+    if (cursor && cursor.createdAt) {
+      q = q.startAfter(cursor.createdAt);
+    } else if (page && page > 1) {
+      // naive offset if the caller uses page/limit: NOT efficient at scale
+      const offset = (page - 1) * limit;
+      q = q.offset(offset);
+    }
 
-    const { entities: posts, raw } = await queryBuilder
-      .groupBy('post.id')
-      .addGroupBy('user.id')
-      .addGroupBy('hashTags.id')
-      .addGroupBy('hashTags.name')
-      .orderBy('post.created_at', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getRawAndEntities();
+    // total count: Firestore has count() aggregation (server SDK). Use it if available; otherwise avoid.
+    let total = 0;
+    try {
+      // @ts-ignore - aggregate count on admin SDK
+      const countSnap = await this.postsCol.count().get();
+      total = countSnap.data().count || 0;
+    } catch {
+      // best-effort fallback (expensive) - warning: will scan collection
+      total = (await this.postsCol.get()).size;
+    }
 
-    const mappedPosts = posts.map((post, index) => ({
-      ...post,
-      user: {
-        id: post.user.id,
-        email: post.user.email,
-        username: post.user.username,
-        avatarUrl: post.user.avatarUrl,
-        role: post.user.role,
-        colorType: post.user.colorType,
-      },
-      likeCount: parseInt(raw[index]?.likeCount || '0', 10),
-    }));
+    // fetch page
+    const snapshot = await q.limit(limit).get();
+    const posts = snapshot.docs.map(d => this.docToPost(d));
 
-    return {
-      posts: mappedPosts as PostM[],
-      total,
-    };
+    return firebaseNormalize({ posts, total });
   }
+
   async getPostsByUserId(
     page: number,
     limit: number,
     userId: string,
     searchQuery: string,
+    cursor?: { createdAt: FirebaseFirestore.Timestamp; id?: string } | null,
   ): Promise<{ posts: Partial<PostM>[]; total: number }> {
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .where('post.user_id = :userId', { userId })
-      .leftJoinAndSelect('post.hashTags', 'hashTags')
-      .leftJoin('post.postLikes', 'postLikes')
-      .leftJoinAndSelect('post.user', 'user')
-      .addSelect([
-        'user.id',
-        'user.email',
-        'user.username',
-        'user.avatarUrl',
-        'user.role',
-        'user.colorType',
-      ])
-      .addSelect('COUNT(postLikes.id)', 'likeCount')
-      .orderBy('post.created_at', 'DESC');
+    let q: FirebaseFirestore.Query = this.postsCol.where('userId', '==', userId).orderBy('createdAt', 'desc');
 
-    // Add search condition for post title if searchQuery is provided
     if (searchQuery && searchQuery.trim()) {
-      queryBuilder.where('LOWER(post.title) LIKE LOWER(:searchTerm)', {
-        searchTerm: `%${searchQuery.trim()}%`,
-      });
+      q = q.where('title_lower', '>=', searchQuery.toLowerCase()).where('title_lower', '<=', searchQuery.toLowerCase() + '\uf8ff');
     }
-    // Get total count before pagination
-    const total = await queryBuilder.getCount();
 
-    const { entities: posts, raw } = await queryBuilder
-      .groupBy('post.id')
-      .addGroupBy('user.id')
-      .addGroupBy('hashTags.id')
-      .addGroupBy('hashTags.name')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getRawAndEntities();
+    if (cursor && cursor.createdAt) q = q.startAfter(cursor.createdAt);
+    else if (page && page > 1) q = q.offset((page - 1) * limit);
 
-    const mappedPosts = posts.map((post, index) => ({
-      ...post,
-      user: {
-        id: post.user.id,
-        email: post.user.email,
-        username: post.user.username,
-        avatarUrl: post.user.avatarUrl,
-        role: post.user.role,
-        colorType: post.user.colorType,
-      },
-      likeCount: parseInt(raw[index]?.likeCount || '0', 10),
-    }));
+    let total = 0;
+    try {
+      const countSnap = await this.postsCol.where('userId', '==', userId).count().get();
+      total = countSnap.data().count || 0;
+    } catch {
+      total = (await this.postsCol.where('userId', '==', userId).get()).size;
+    }
 
-    return {
-      posts: mappedPosts as PostM[],
-      total,
-    };
+    const snap = await q.limit(limit).get();
+    const posts = snap.docs.map(d => this.docToPost(d));
+    return firebaseNormalize({ posts, total });
   }
+
   async getPostsByHashTagName(
     page: number,
     limit: number,
     hashTagName: string,
     searchQuery: string,
+    cursor?: { createdAt: FirebaseFirestore.Timestamp; id?: string } | null,
   ): Promise<{ posts: Partial<PostM>[]; total: number }> {
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .leftJoinAndSelect('post.hashTags', 'hashTags')
-      .leftJoin('post.postLikes', 'postLikes')
-      .leftJoin('post.user', 'user')
-      .addSelect([
-        'user.id',
-        'user.email',
-        'user.username',
-        'user.avatarUrl',
-        'user.role',
-        'user.colorType',
-      ])
-      .addSelect('COUNT(postLikes.id)', 'likeCount')
-      .orderBy('post.created_at', 'DESC');
+    // Strategy: find tag(s) by name, take ids, then query posts where hashTagIds array contains any of these ids.
+    const tagSnap = await this.hashtagsCol.where('name_lower', '==', hashTagName.toLowerCase()).get();
+    if (tagSnap.empty) return { posts: [], total: 0 };
+    const tagIds = tagSnap.docs.map(d => d.id);
+
+    let q: FirebaseFirestore.Query = this.postsCol.where('hashTagIds', 'array-contains-any', tagIds).orderBy('createdAt', 'desc');
 
     if (searchQuery && searchQuery.trim()) {
-      queryBuilder.where('LOWER(post.title) LIKE LOWER(:searchTerm)', {
-        searchTerm: `%${searchQuery.trim()}%`,
-      });
-    }
-    if (hashTagName && hashTagName.trim()) {
-      queryBuilder.andWhere(
-        `EXISTS (
-          SELECT 1 FROM post_hash_tags_hash_tag pht
-          JOIN hash_tag ht ON ht.id = pht."hashTagId"
-          WHERE pht."postId" = post.id
-          AND LOWER(ht.name) LIKE LOWER(:hashTagName)
-        )`,
-        { hashTagName: `%${hashTagName.trim()}%` },
-      );
+      q = q.where('title_lower', '>=', searchQuery.toLowerCase()).where('title_lower', '<=', searchQuery.toLowerCase() + '\uf8ff');
     }
 
-    // 🔹 Get total before pagination
-    const total = await queryBuilder.getCount();
+    if (cursor && cursor.createdAt) q = q.startAfter(cursor.createdAt);
+    else if (page && page > 1) q = q.offset((page - 1) * limit);
 
-    // 🔹 Apply pagination
-    const { entities: posts, raw } = await queryBuilder
-      .groupBy('post.id')
-      .addGroupBy('user.id')
-      .addGroupBy('hashTags.id')
-      .addGroupBy('hashTags.name')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getRawAndEntities();
+    let total = 0;
+    try {
+      const countSnap = await this.postsCol.where('hashTagIds', 'array-contains-any', tagIds).count().get();
+      total = countSnap.data().count || 0;
+    } catch {
+      total = (await this.postsCol.where('hashTagIds', 'array-contains-any', tagIds).get()).size;
+    }
 
-    const mappedPosts = posts.map((post, index) => ({
-      ...post,
-      likeCount: parseInt(raw[index]?.likeCount || '0', 10),
-    }));
-
-    return {
-      posts: mappedPosts,
-      total,
-    };
+    const snap = await q.limit(limit).get();
+    const posts = snap.docs.map(d => this.docToPost(d));
+    return firebaseNormalize({ posts, total });
   }
 
   async getPostById(id: string): Promise<PostM> {
-    const post = await this.postRepository.findOneBy({ id });
-    return post;
+    const snap = await this.postsCol.doc(id).get();
+    if (!snap.exists) throw new NotFoundException('Post not found');
+    return firebaseNormalize(this.docToPost(snap as QueryDocumentSnapshot));
   }
+
+  // Detailed post: loads post + comments + replies + counters
   async getDetailedPostById(id: string): Promise<any> {
-    const result = await this.postRepository
-      .createQueryBuilder('post')
-      .leftJoinAndSelect('post.hashTags', 'hashTags')
-      .leftJoin('post.postLikes', 'postLikes') // Join postLikes for post like count
-      .leftJoinAndSelect('post.comments', 'comments') // Include comments
-      .leftJoin('comments.commentLikes', 'commentLikes') // Join commentLikes for like count
-      .leftJoinAndSelect('comments.replies', 'replies') // Include replies
-      .leftJoin('replies.replyLikes', 'replyLikes') // Join replyLikes for like count
-      .leftJoinAndSelect('post.user', 'postUser') // Include user for post
-      .addSelect([
-        'postUser.id',
-        'postUser.email',
-        'postUser.username',
-        'postUser.avatarUrl',
-        'postUser.role',
-        'postUser.colorType',
-      ]) // Select specific fields for post user
-      .leftJoinAndSelect('comments.user', 'commentUser') // Include user for comments
-      .addSelect([
-        'commentUser.id',
-        'commentUser.email',
-        'commentUser.username',
-        'commentUser.avatarUrl',
-        'commentUser.role',
-        'commentUser.colorType',
-      ]) // Select specific fields for comment user
-      .leftJoinAndSelect('replies.user', 'replyUser') // Include user for replies
-      .addSelect([
-        'replyUser.id',
-        'replyUser.email',
-        'replyUser.username',
-        'replyUser.avatarUrl',
-        'replyUser.role',
-        'replyUser.colorType',
-      ]) // Select specific fields for reply user
-      .addSelect('COUNT(DISTINCT postLikes.id)', 'postLikeCount') // Count post likes
-      .addSelect('COUNT(DISTINCT commentLikes.id)', 'commentLikeCount') // Count comment likes
-      .addSelect('COUNT(DISTINCT replyLikes.id)', 'replyLikeCount') // Count reply likes
-      .groupBy('post.id')
-      .addGroupBy('postUser.id')
-      .addGroupBy('comments.id')
-      .addGroupBy('commentUser.id')
-      .addGroupBy('replies.id')
-      .addGroupBy('replyUser.id') // Group by reply user ID
-      .addGroupBy('hashTags.id') // Fix for error
-      .addGroupBy('hashTags.name') // Include more fields if needed
-      .where('post.id = :id', { id })
-      .getRawAndEntities();
+    const postSnap = await this.postsCol.doc(id).get();
+    if (!postSnap.exists) throw new NotFoundException('Post not found');
 
-    if (!result.entities[0]) throw new Error('Post not found');
+    const postData = postSnap.data() as any;
+    const post: any = this.docToPost(postSnap as QueryDocumentSnapshot);
 
-    const postEntity = result.entities[0];
-    const rawData = result.raw;
-
-    const commentsWithReplies = postEntity.comments.map((comment) => {
-      const commentLikeCount = parseInt(
-        rawData.find((data) => data.comments_id === comment.id)
-          ?.commentLikeCount || '0',
-        10,
-      );
-
-      const repliesWithLikeCount = comment.replies.map((reply) => {
-        const replyLikeCount = parseInt(
-          rawData.find((data) => data.replies_id === reply.id)
-            ?.replyLikeCount || '0',
-          10,
-        );
-
+    // load comments for post
+    const commentsSnap = await this.commentsCol.where('postId', '==', id).orderBy('createdAt', 'asc').get();
+    const comments = [];
+    for (const cdoc of commentsSnap.docs) {
+      const c = cdoc.data() as any;
+      // fetch replies for comment
+      const repliesSnap = await this.repliesCol.where('commentId', '==', cdoc.id).orderBy('createdAt', 'asc').get();
+      const replies = repliesSnap.docs.map(r => {
+        const rd = r.data() as any;
         return {
-          ...reply,
-          user: {
-            id: reply.user.id,
-            email: reply.user.email,
-            username: reply.user.username,
-            avatarUrl: reply.user.avatarUrl,
-            role: reply.user.role,
-            colorType: reply.user.colorType,
-          },
-          likeCount: replyLikeCount,
+          id: r.id,
+          content: rd.content,
+          user: rd.user,
+          likeCount: typeof rd.likeCount === 'number' ? rd.likeCount : 0,
+          createdAt: rd.createdAt,
         };
       });
 
-      return {
-        ...comment,
-        user: {
-          id: comment.user.id,
-          email: comment.user.email,
-          username: comment.user.username,
-          avatarUrl: comment.user.avatarUrl,
-          role: comment.user.role,
-          colorType: comment.user.colorType,
-        },
-        likeCount: commentLikeCount,
-        replies: repliesWithLikeCount,
-      };
-    });
+      comments.push({
+        id: cdoc.id,
+        content: c.content,
+        user: c.user,
+        likeCount: typeof c.likeCount === 'number' ? c.likeCount : 0,
+        createdAt: c.createdAt,
+        replies,
+      });
+    }
 
-    return {
-      id: postEntity.id,
-      user: {
-        id: postEntity.user.id,
-        email: postEntity.user.email,
-        username: postEntity.user.username,
-        avatarUrl: postEntity.user.avatarUrl,
-        role: postEntity.user.role,
-        colorType: postEntity.user.colorType,
-      },
-      post_type: postEntity.post_type,
-      media_url: postEntity.media_url,
-      title: postEntity.title,
-      content: postEntity.content,
-      hashTags: postEntity.hashTags,
-      created_at: postEntity.created_at,
-      updated_at: postEntity.updated_at,
-      likeCount: parseInt(rawData[0]?.postLikeCount || '0', 10),
-      comments: commentsWithReplies,
-    };
+    return firebaseNormalize({
+      id: post.id,
+      user: post.user,
+      post_type: post.post_type,
+      media_url: post.media_url,
+      title: post.title,
+      content: post.content,
+      hashTags: post.hashTags,
+      created_at: post.created_at,
+      updated_at: post.updated_at,
+      likeCount: post.likeCount,
+      comments,
+    });
   }
+
   async getPostsByUserIds(
     page: number,
     limit: number,
     userIds: string[],
     searchQuery: string,
+    cursor?: { createdAt: FirebaseFirestore.Timestamp; id?: string } | null,
   ): Promise<{ posts: PostM[]; total: number }> {
-    const queryBuilder = this.postRepository
-      .createQueryBuilder('post')
-      .leftJoinAndSelect('post.hashTags', 'hashTags')
-      .leftJoin('post.user', 'user')
-      .leftJoin('post.postLikes', 'postLikes')
-      .addSelect([
-        'user.id',
-        'user.email',
-        'user.username',
-        'user.role',
-        'user.avatarUrl',
-        'user.colorType',
-      ])
-      .addSelect('COUNT(postLikes.id)', 'likeCount')
-      .where('post.user_id IN (:...userIds)', { userIds })
-      .groupBy('post.id')
-      .addGroupBy('post.title')
-      .addGroupBy('post.content')
-      .addGroupBy('post.media_url')
-      .addGroupBy('post.post_type')
-      .addGroupBy('post.created_at')
-      .addGroupBy('post.updated_at')
-      .addGroupBy('user.id')
-      .addGroupBy('user.email')
-      .addGroupBy('user.username')
-      .addGroupBy('user.role')
-      .addGroupBy('hashTags.id')
-      .addGroupBy('hashTags.name')
-      .orderBy('post.created_at', 'DESC');
+    // Firestore supports IN for up to 10 items. If userIds > 10, chunk them.
+    const chunks: string[][] = [];
+    const n = 10;
+    for (let i = 0; i < userIds.length; i += n) chunks.push(userIds.slice(i, i + n));
 
-    if (searchQuery && searchQuery.trim()) {
-      queryBuilder.where('LOWER(post.title) LIKE LOWER(:searchTerm)', {
-        searchTerm: `%${searchQuery.trim()}%`,
-      });
+    let allPosts: PostM[] = [];
+    let total = 0;
+
+    for (const chunk of chunks) {
+      let q: FirebaseFirestore.Query = this.postsCol.where('userId', 'in', chunk).orderBy('createdAt', 'desc');
+
+      if (searchQuery && searchQuery.trim()) {
+        q = q.where('title_lower', '>=', searchQuery.toLowerCase()).where('title_lower', '<=', searchQuery.toLowerCase() + '\uf8ff');
+      }
+
+      if (cursor && cursor.createdAt) q = q.startAfter(cursor.createdAt);
+      else if (page && page > 1) q = q.offset((page - 1) * limit);
+
+      try {
+        const countSnap = await this.postsCol.where('userId', 'in', chunk).count().get();
+        total += countSnap.data().count || 0;
+      } catch {
+        total += (await this.postsCol.where('userId', 'in', chunk).get()).size;
+      }
+
+      const snap = await q.limit(limit).get();
+      allPosts = allPosts.concat(snap.docs.map(d => this.docToPost(d)));
     }
 
-    const total = await queryBuilder.getCount();
-
-    const { entities: posts, raw } = await queryBuilder
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getRawAndEntities();
-
-    const mappedPosts = posts.map((post, index) => ({
-      ...post,
-      likeCount: parseInt(raw[index]?.likeCount || '0', 10),
-    }));
-
-    return { posts: mappedPosts, total };
+    // naive: trimming to limit for combined result
+    return firebaseNormalize({ posts: allPosts.slice(0, limit), total });
   }
-  async editPost(id: string, post: Partial<PostM>): Promise<void> {
-    const existingPost = await this.postRepository.findOne({
-      where: { id },
-      relations: ['hashTags'],
-    });
-    // Update simple fields
-    Object.assign(existingPost, post);
 
-    // If hashtags are updated, replace them
+  // Edit post: update fields, manage hashtag counts if tags changed
+  async editPost(id: string, post: Partial<PostM>): Promise<void> {
+    const postRef = this.postsCol.doc(id);
+    const snap = await postRef.get();
+    if (!snap.exists) throw new NotFoundException('Post not found');
+
+    const existing = snap.data() as any;
+
+    // If hashtags changed: update postCount counters
+    const oldTagIds: string[] = existing.hashTagIds || [];
+    const newTagIds: string[] = (post.hashTags || []).map((h: any) => h.id).filter(Boolean);
+
+    const toAdd = newTagIds.filter(id2 => !oldTagIds.includes(id2));
+    const toRemove = oldTagIds.filter(id2 => !newTagIds.includes(id2));
+
+    const batch = this.firestore.batch();
+    for (const addId of toAdd) batch.update(this.hashtagsCol.doc(addId), { postCount: FieldValue.increment(1) });
+    for (const remId of toRemove) batch.update(this.hashtagsCol.doc(remId), { postCount: FieldValue.increment(-1) });
+
+    // Prepare payload
+    const payload: any = { ...post, updatedAt: FieldValue.serverTimestamp() };
     if (post.hashTags) {
-      existingPost.hashTags = post.hashTags; // Assign new hashtags
+      payload.hashTagIds = newTagIds;
+      payload.hashTagNames = (post.hashTags || []).map((h: any) => h.name || '');
     }
 
-    await this.postRepository.save(existingPost);
+    batch.update(postRef, payload);
+    await batch.commit();
   }
 
   async deletePost(id: string): Promise<void> {
-    await this.postRepository.delete({ id });
+    const postRef = this.postsCol.doc(id);
+    const snap = await postRef.get();
+    if (!snap.exists) return;
+    const data = snap.data() as any;
+
+    // decrement hashtag postCounts
+    const tagIds: string[] = data.hashTagIds || [];
+    const batch = this.firestore.batch();
+    for (const tId of tagIds) batch.update(this.hashtagsCol.doc(tId), { postCount: FieldValue.increment(-1) });
+
+    batch.delete(postRef);
+    await batch.commit();
+
+    // Optionally delete comments/replies/likes belonging to this post - implement as needed (batch deletes)
   }
 }
