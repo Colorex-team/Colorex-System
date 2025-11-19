@@ -21,11 +21,11 @@ export class GcsStorageService implements IGcsStorage {
       metadata: { contentType: mimeType },
     });
 
-    return `https://storage.googleapis.com/${this.bucket.name}/${destination}`;
+    return `https://firebasestorage.googleapis.com/${this.bucket.name}/${destination}`;
   }
 
   async deleteFile(filePath: string): Promise<void> {
-    const decodedPath = decodeURIComponent(filePath.replace(`https://storage.googleapis.com/${this.bucket.name}/`, ''));
+    const decodedPath = decodeURIComponent(filePath.replace(`https://firebasestorage.googleapis.com/${this.bucket.name}/`, ''));
 
     const file = this.bucket.file(decodedPath);
 
