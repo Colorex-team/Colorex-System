@@ -28,6 +28,6 @@ export class JwtTokenManager extends AuthenticationTokenManager {
   // Method to decode the payload without verifying the token
   async decodePayload(token: string): Promise<any> {
     const decoded = this.jwtService.decode(token);
-    return decoded;
+    return decoded;``
   }
 }

@@ -7,20 +7,22 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(cookieParser());
   app.enableCors({
-    origin: (origin, callback) => {
-      const allowedOrigins = [
-        'http://localhost:3000',
-      ];
-      if (
-        !origin ||
-        allowedOrigins.includes(origin) ||
-        origin.endsWith('.ngrok-free.app')
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: '*',
+    // (origin, callback) => {
+    //   const allowedOrigins = [
+    //     'http://localhost:3000',
+    //     '100.112.172.28'
+    //   ];
+    //   if (
+    //     !origin ||
+    //     allowedOrigins.includes(origin) ||
+    //     origin.endsWith('.ngrok-free.app')
+    //   ) {
+    //     callback(null, true);
+    //   } else {
+    //     callback(new Error('Not allowed by CORS'));
+    //   }
+    // },
     credentials: true,
   });
   // Global Validation Configuration
@@ -41,6 +43,6 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api-docs', app, document);
   const port = process.env.PORT || 5000;
-  await app.listen(port);
+  await app.listen(port, "0.0.0.0");
 }
 bootstrap();

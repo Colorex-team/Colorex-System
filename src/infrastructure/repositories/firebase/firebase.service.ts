@@ -1,24 +1,17 @@
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
-import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateNotificationDto } from '../../../presentations/firebase/dto/createNotification.dto';
 import { FirebaseRepository } from '../../../domains/repositories/firebase/firebase.repository';
 
-
 @Injectable()
 export class FirebaseService implements FirebaseRepository {
-  private messaging: admin.messaging.Messaging;
-
-  constructor() {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-
-    this.messaging = admin.messaging();
-  }
+  constructor(
+    @Inject('FIREBASE_MESSAGING')
+    private readonly messaging: admin.messaging.Messaging,
+  ) {}
 
   async sendNotification(payload: CreateNotificationDto): Promise<void> {
-    const message = {
+    const message: admin.messaging.Message = {
       notification: {
         title: payload.title,
         body: payload.body,
@@ -30,7 +23,8 @@ export class FirebaseService implements FirebaseRepository {
       await this.messaging.send(message);
       console.log('Notification sent successfully');
     } catch (error) {
-      new BadRequestException('Failed to send notification');
+      console.error(error);
+      throw new BadRequestException('Failed to send notification');
     }
   }
 }

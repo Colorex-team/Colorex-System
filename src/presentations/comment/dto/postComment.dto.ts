@@ -6,7 +6,6 @@ export class PostCommentParamsDto {
     example: '5f1b4c4d-1b4c-4d1b-4c1d-4d1b4c4d1b4c',
     description: 'The id of the post', 
   })
-  @IsUUID()
   @IsNotEmpty()
   postId: string
 }

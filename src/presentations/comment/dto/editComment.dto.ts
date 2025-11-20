@@ -6,7 +6,6 @@ export class EditCommentParamsDto {
     example: 'c0f0c2e2-7a0d-4f0d-8a0d-0a0d0a0a0a0a',
     description: 'The id of the comment',
   })
-  @IsUUID()
   @IsString()
   commentId: string;
 }

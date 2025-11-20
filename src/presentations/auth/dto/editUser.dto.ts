@@ -58,6 +58,5 @@ export class EditUserParamsDto {
     example: "10350c9f-1384-4e9e-9aba-b9eef895a829",
   })
   @IsString()
-  @IsUUID()
   profileId: string;
 }

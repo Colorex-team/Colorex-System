@@ -2,7 +2,7 @@ import { DynamicModule, Module } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { EnvironmentConfigModule } from '../config/environment-config/environment-config.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
-import { UserRepositoryOrm } from '../repositories/user/user.repository';
+import { UserRepositoryFirebase } from '../repositories/user/user.repository';
 import { UseCaseProxy } from './usecase-proxy';
 import { RegisterUserUsecase } from '../../applications/use-cases/user/registerUser.usecase';
 
@@ -11,19 +11,19 @@ import Argon2PasswordHash from '../Argon2Passwordhash';
 import { JwtTokenManager } from '../JwtTokenManager';
 import { LoginUserUsecase } from '../../applications/use-cases/user/loginUser.usecase';
 import { CurrUserUsecase } from '../../applications/use-cases/user/currUser.usecase';
-import { PostRepositoryOrm } from '../repositories/posts/post.repository';
+import { PostRepositoryFirestore } from '../repositories/posts/post.repository';
 import { PostMediaUsecase } from '../../applications/use-cases/posts/postMedia.usecase';
-import { CommentRepositoryOrm } from '../repositories/comment/comment.repository';
+import { CommentRepositoryFirebase } from '../repositories/comment/comment.repository';
 import { PostCommentUsecase } from '../../applications/use-cases/comment/postComment.usecase';
-import { ReplyRepositoryOrm } from '../repositories/reply/reply.repository';
+import { ReplyRepositoryFirebase } from '../repositories/reply/reply.repository';
 import { postReplyUseCase } from '../../applications/use-cases/reply/postReply.usecase';
 import { GetMediaDetailsUsecase } from '../../applications/use-cases/posts/getMedia.usecase';
 import { PostLikeUsecase } from '../../applications/use-cases/like/postLike.usecase';
-import { CommentLikeRepositoryOrm } from '../repositories/like/commentLike.repository';
+import { CommentLikeRepositoryFirebase } from '../repositories/like/commentLike.repository';
 import { CommentLikeUsecase } from '../../applications/use-cases/like/commentLike.usecase';
-import { ReplyLikeRepositoryOrm } from '../repositories/like/replyLike.repository';
+import { ReplyLikeRepositoryFirebase } from '../repositories/like/replyLike.repository';
 import { ReplyLikeUsecase } from '../../applications/use-cases/like/replyLike.usecasse';
-import { PostLikeRepositoryOrm } from '../repositories/like/postLike.repository';
+import { PostLikeRepositoryFirebase } from '../repositories/like/postLike.repository';
 import { DeleteMediaUsecase } from '../../applications/use-cases/posts/deleteMedia.usecase';
 import { DeleteCommentUsecase } from '../../applications/use-cases/comment/deleteComment.usecase';
 import { DeleteReplyUsecase } from '../../applications/use-cases/reply/deleteReply.usecase';
@@ -32,20 +32,20 @@ import { EditMediaUsecase } from '../../applications/use-cases/posts/editMedia.u
 import { EditCommentUsecase } from '../../applications/use-cases/comment/editComment.usecase';
 import { EditReplyUsecase } from '../../applications/use-cases/reply/editReply.usecase';
 import { GetPaginatedUserMediaUsecase } from '../../applications/use-cases/posts/getPaginatedUserMedia.usecase';
-import { FollowRepositoryOrm } from '../repositories/follow/follow.repository';
+import { FollowRepositoryFirebase } from '../repositories/follow/follow.repository';
 import { FollowUserUseCase } from '../../applications/use-cases/follow/followUser.usecase';
 import { UnfollowUserUseCase } from '../../applications/use-cases/follow/unfollowUser.usecase';
 import { GetUserFollowStatusUsecase } from '../../applications/use-cases/follow/GetUserFollowStatus.usecase';
 import { GetUserFollowingUseCase } from '../../applications/use-cases/follow/getUserFollowing.usecase';
 import { GetUserFollowerUseCase } from '../../applications/use-cases/follow/getUserFollower.usecase';
-import { HashTagRepositoryOrm } from '../repositories/hashtag/hashtag.repository';
+import { HashTagRepositoryFirestore } from '../repositories/hashtag/hashtag.repository';
 import { GetPaginatedHashtagMediaUsecase } from '../../applications/use-cases/posts/getPaginatedHashtagMedia.usecase';
 import { GetPagniatedFollowingMediaUseCase } from '../../applications/use-cases/posts/getPaginatedFollowingMedia.usecase';
 import { STORAGE_TOKEN, StorageModule } from '../repositories/storage/storage.module';
 import { UploadMediaUseCase } from '../../applications/use-cases/media/uploadMedia.usecase';
 import { IGcsStorage } from '../../domains/repositories/storage/IgcsStorage';
 import { EditUserUsecase } from '../../applications/use-cases/user/editUser.usecase';
-import { MessageRepositoryOrm } from '../repositories/message/message.repository';
+import { MessageRepositoryFirebase } from '../repositories/message/message.repository';
 import { CreateMessageUsecase } from '../../applications/use-cases/message/createMessage.usecase';
 import { GetMessagesUsecase } from '../../applications/use-cases/message/getMessages.usecase';
 import { FirebaseService } from '../repositories/firebase/firebase.service';
@@ -56,7 +56,7 @@ import { DeleteStorageMediaUseCase } from '../../applications/use-cases/media/de
 import { getUserByIdUsecase } from '../../applications/use-cases/user/getUserById.usecase';
 import { MidtransModule, PAYMENT_GATEWAY_TOKEN } from '../repositories/payment-gateway/midtrans.module';
 import { CreateSubcriptionPaymentUseCase } from '../../applications/use-cases/payment-gateway/createSubcriptionPayment.usecase';
-import { SubscriptionRepositoryOrm } from '../repositories/subcription/subscription.repository';
+import { SubscriptionRepositoryFirebase } from '../repositories/subcription/subscription.repository';
 import { IMidtrans } from '../../domains/repositories/payment-gateway/IMidTrans';
 import { PostSubscriptionUseCase } from '../../applications/use-cases/subscription/postSubscription.usecase';
 import { MidtransWebHookUseCase } from '../../applications/use-cases/payment-gateway/midtransWebHook.usecase';
@@ -65,6 +65,7 @@ import { GetCommentLikeStatusUsecase } from '../../applications/use-cases/like/g
 import { GetReplyLikeStatusUsecase } from '../../applications/use-cases/like/getReplyLikeStatus.usecase';
 import { HandleExpiredSubscriptionUseCase } from '../../applications/use-cases/subscription/handleExpiredSubscription.usecase';
 import { GetSubscriptionByOrderIdUseCase } from 'src/applications/use-cases/payment-gateway/getSubscriptionByOrderId.usecase';
+import { FirebaseModule } from '../config/firebase/firebase.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { GetSubscriptionByOrderIdUseCase } from 'src/applications/use-cases/paym
     RepositoriesModule,
     MidtransModule,
     StorageModule,
+    FirebaseModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '1d' },
@@ -149,10 +151,10 @@ export class UseCaseProxyModule {
         },
         // registering usecases
         {
-          inject: [UserRepositoryOrm, Argon2PasswordHash],
+          inject: [UserRepositoryFirebase, Argon2PasswordHash],
           provide: UseCaseProxyModule.REGISTER_USER_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
             passwordHash: Argon2PasswordHash,
           ) =>
             new UseCaseProxy(
@@ -160,10 +162,10 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [UserRepositoryOrm, JwtTokenManager, Argon2PasswordHash],
+          inject: [UserRepositoryFirebase, JwtTokenManager, Argon2PasswordHash],
           provide: UseCaseProxyModule.LOGIN_USER_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
             authTokenManager: JwtTokenManager,
             passwordHash: Argon2PasswordHash,
           ) =>
@@ -176,10 +178,10 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [UserRepositoryOrm, JwtTokenManager],
+          inject: [UserRepositoryFirebase, JwtTokenManager],
           provide: UseCaseProxyModule.CURRENT_USER_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
             authTokenManager: JwtTokenManager,
           ) =>
             new UseCaseProxy(
@@ -187,15 +189,15 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [UserRepositoryOrm],
+          inject: [UserRepositoryFirebase],
           provide: UseCaseProxyModule.GET_USER_BY_ID_USECASE,
-          useFactory: (userRepository: UserRepositoryOrm) =>
+          useFactory: (userRepository: UserRepositoryFirebase) =>
             new UseCaseProxy(new getUserByIdUsecase(userRepository)),
         },
         {
-          inject: [UserRepositoryOrm],
+          inject: [UserRepositoryFirebase],
           provide: UseCaseProxyModule.EDIT_USER_USECASE,
-          useFactory: (userRepository: UserRepositoryOrm) =>
+          useFactory: (userRepository: UserRepositoryFirebase) =>
             new UseCaseProxy(new EditUserUsecase(userRepository)),
         },
         {
@@ -211,12 +213,12 @@ export class UseCaseProxyModule {
             new UseCaseProxy(new DeleteStorageMediaUseCase(gcsStorage)),
         },
         {
-          inject: [PostRepositoryOrm, UserRepositoryOrm, HashTagRepositoryOrm],
+          inject: [PostRepositoryFirestore, UserRepositoryFirebase, HashTagRepositoryFirestore],
           provide: UseCaseProxyModule.POST_MEDIA_USECASE,
           useFactory: (
-            postRepository: PostRepositoryOrm,
-            userRepository: UserRepositoryOrm,
-            hashtagRepository: HashTagRepositoryOrm,
+            postRepository: PostRepositoryFirestore,
+            userRepository: UserRepositoryFirebase,
+            hashtagRepository: HashTagRepositoryFirestore,
           ) =>
             new UseCaseProxy(
               new PostMediaUsecase(
@@ -227,29 +229,29 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [PostRepositoryOrm],
+          inject: [PostRepositoryFirestore],
           provide: UseCaseProxyModule.DELETE_POST_USECASE,
-          useFactory: (postRepository: PostRepositoryOrm) =>
+          useFactory: (postRepository: PostRepositoryFirestore) =>
             new UseCaseProxy(new DeleteMediaUsecase(postRepository)),
         },
         {
-          inject: [PostRepositoryOrm, HashTagRepositoryOrm],
+          inject: [PostRepositoryFirestore, HashTagRepositoryFirestore],
           provide: UseCaseProxyModule.EDIT_POST_USECASE,
           useFactory: (
-            postRepository: PostRepositoryOrm,
-            hashtagRepository: HashTagRepositoryOrm,
+            postRepository: PostRepositoryFirestore,
+            hashtagRepository: HashTagRepositoryFirestore,
           ) =>
             new UseCaseProxy(
               new EditMediaUsecase(postRepository, hashtagRepository),
             ),
         },
         {
-          inject: [UserRepositoryOrm, PostRepositoryOrm, PostLikeRepositoryOrm],
+          inject: [UserRepositoryFirebase, PostRepositoryFirestore, PostLikeRepositoryFirebase],
           provide: UseCaseProxyModule.POST_LIKE_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
-            postRepository: PostRepositoryOrm,
-            postLikeRepository: PostLikeRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
+            postRepository: PostRepositoryFirestore,
+            postLikeRepository: PostLikeRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new PostLikeUsecase(
@@ -260,38 +262,38 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [PostRepositoryOrm,PostLikeRepositoryOrm],
+          inject: [PostRepositoryFirestore,PostLikeRepositoryFirebase],
           provide: UseCaseProxyModule.GET_POST_LIKE_STATUS_USECASE,
-          useFactory: (postRepository:PostRepositoryOrm,postLikeRepository: PostLikeRepositoryOrm) =>
+          useFactory: (postRepository:PostRepositoryFirestore,postLikeRepository: PostLikeRepositoryFirebase) =>
             new UseCaseProxy(new GetPostLikeStatusUseCase(postRepository,postLikeRepository)),
         },
         {
-          inject: [PostRepositoryOrm,PostLikeRepositoryOrm],
+          inject: [PostRepositoryFirestore,PostLikeRepositoryFirebase],
           provide: UseCaseProxyModule.GET_PAGINATED_MEDIA_USECASE,
-          useFactory: (postRepository: PostRepositoryOrm,likeRepository:PostLikeRepositoryOrm) =>
+          useFactory: (postRepository: PostRepositoryFirestore,likeRepository:PostLikeRepositoryFirebase) =>
             new UseCaseProxy(new GetPaginatedMediaUsecase(postRepository,likeRepository)),
         },
         {
-          inject: [PostRepositoryOrm],
+          inject: [PostRepositoryFirestore],
           provide: UseCaseProxyModule.GET_PAGINATED_USER_MEDIA_USECASE,
-          useFactory: (postRepository: PostRepositoryOrm) =>
+          useFactory: (postRepository: PostRepositoryFirestore) =>
             new UseCaseProxy(new GetPaginatedUserMediaUsecase(postRepository)),
         },
         {
-          inject: [PostRepositoryOrm],
+          inject: [PostRepositoryFirestore],
           provide: UseCaseProxyModule.GET_PAGINATED_HASHTAG_MEDIA_USECASE,
-          useFactory: (postRepository: PostRepositoryOrm) =>
+          useFactory: (postRepository: PostRepositoryFirestore) =>
             new UseCaseProxy(
               new GetPaginatedHashtagMediaUsecase(postRepository),
             ),
         },
         {
-          inject: [PostRepositoryOrm, FollowRepositoryOrm,PostLikeRepositoryOrm],
+          inject: [PostRepositoryFirestore, FollowRepositoryFirebase, PostLikeRepositoryFirebase],
           provide: UseCaseProxyModule.GET_PAGINATED_FOLLOWING_MEDIA_USECASE,
           useFactory: (
-            postRepository: PostRepositoryOrm,
-            followRepository: FollowRepositoryOrm,
-            postLikeRepository: PostLikeRepositoryOrm
+            postRepository: PostRepositoryFirestore,
+            followRepository: FollowRepositoryFirebase, 
+            postLikeRepository: PostLikeRepositoryFirebase
           ) =>
             new UseCaseProxy(
               new GetPagniatedFollowingMediaUseCase(
@@ -302,18 +304,18 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [PostRepositoryOrm],
+          inject: [PostRepositoryFirestore],
           provide: UseCaseProxyModule.GET_MEDIA_USECASE,
-          useFactory: (postRepository: PostRepositoryOrm) =>
+          useFactory: (postRepository: PostRepositoryFirestore) =>
             new UseCaseProxy(new GetMediaDetailsUsecase(postRepository)),
         },
         {
-          inject: [PostRepositoryOrm, UserRepositoryOrm, CommentRepositoryOrm],
+          inject: [PostRepositoryFirestore, UserRepositoryFirebase, CommentRepositoryFirebase],
           provide: UseCaseProxyModule.POST_COMMENT_USECASE,
           useFactory: (
-            postRepository: PostRepositoryOrm,
-            userRepository: UserRepositoryOrm,
-            commentRepository: CommentRepositoryOrm,
+            postRepository: PostRepositoryFirestore,
+            userRepository: UserRepositoryFirebase,
+            commentRepository: CommentRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new PostCommentUsecase(
@@ -324,28 +326,28 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [CommentRepositoryOrm],
+          inject: [CommentRepositoryFirebase],
           provide: UseCaseProxyModule.EDIT_COMMENT_USECASE,
-          useFactory: (commentRepository: CommentRepositoryOrm) =>
+          useFactory: (commentRepository: CommentRepositoryFirebase) =>
             new UseCaseProxy(new EditCommentUsecase(commentRepository)),
         },
         {
-          inject: [CommentRepositoryOrm],
+          inject: [CommentRepositoryFirebase],
           provide: UseCaseProxyModule.DELETE_COMMENT_USECASE,
-          useFactory: (commentRepository: CommentRepositoryOrm) =>
+          useFactory: (commentRepository: CommentRepositoryFirebase) =>
             new UseCaseProxy(new DeleteCommentUsecase(commentRepository)),
         },
         {
           inject: [
-            UserRepositoryOrm,
-            CommentRepositoryOrm,
-            CommentLikeRepositoryOrm,
+            UserRepositoryFirebase,
+            CommentRepositoryFirebase,
+            CommentLikeRepositoryFirebase,
           ],
           provide: UseCaseProxyModule.COMMENT_LIKE_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
-            commentRepository: CommentRepositoryOrm,
-            commentLikeRepository: CommentLikeRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
+            commentRepository: CommentRepositoryFirebase,
+            commentLikeRepository: CommentLikeRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new CommentLikeUsecase(
@@ -356,24 +358,24 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [CommentRepositoryOrm,CommentLikeRepositoryOrm],
+          inject: [CommentRepositoryFirebase,CommentLikeRepositoryFirebase],
           provide: UseCaseProxyModule.GET_COMMENT_LIKE_STATUS_USECASE,
-          useFactory: (commentRepository: CommentRepositoryOrm,commentLikeRepository: CommentLikeRepositoryOrm) =>
+          useFactory: (commentRepository: CommentRepositoryFirebase,commentLikeRepository: CommentLikeRepositoryFirebase) =>
             new UseCaseProxy(new GetCommentLikeStatusUsecase(commentRepository,commentLikeRepository)),
         },
         {
           inject: [
-            UserRepositoryOrm,
-            PostRepositoryOrm,
-            CommentRepositoryOrm,
-            ReplyRepositoryOrm,
+            UserRepositoryFirebase,
+            PostRepositoryFirestore,
+            CommentRepositoryFirebase,
+            ReplyRepositoryFirebase,
           ],
           provide: UseCaseProxyModule.POST_REPLY_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
-            postRepository: PostRepositoryOrm,
-            commentRepository: CommentRepositoryOrm,
-            replyRepository: ReplyRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
+            postRepository: PostRepositoryFirestore,
+            commentRepository: CommentRepositoryFirebase,
+            replyRepository: ReplyRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new postReplyUseCase(
@@ -385,28 +387,28 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [ReplyRepositoryOrm],
+          inject: [ReplyRepositoryFirebase],
           provide: UseCaseProxyModule.EDIT_REPLY_USECASE,
-          useFactory: (replyRepository: ReplyRepositoryOrm) =>
+          useFactory: (replyRepository: ReplyRepositoryFirebase) =>
             new UseCaseProxy(new EditReplyUsecase(replyRepository)),
         },
         {
-          inject: [ReplyRepositoryOrm],
+          inject: [ReplyRepositoryFirebase],
           provide: UseCaseProxyModule.DELETE_REPLY_USECASE,
-          useFactory: (replyRepository: ReplyRepositoryOrm) =>
+          useFactory: (replyRepository: ReplyRepositoryFirebase) =>
             new UseCaseProxy(new DeleteReplyUsecase(replyRepository)),
         },
         {
           inject: [
-            UserRepositoryOrm,
-            ReplyRepositoryOrm,
-            ReplyLikeRepositoryOrm,
+            UserRepositoryFirebase,
+            ReplyRepositoryFirebase,
+            ReplyLikeRepositoryFirebase,
           ],
           provide: UseCaseProxyModule.REPLY_LIKE_USECASE,
           useFactory: (
-            userRepository: UserRepositoryOrm,
-            replyRepository: ReplyRepositoryOrm,
-            replyLikeRepository: ReplyLikeRepositoryOrm,
+            userRepository: UserRepositoryFirebase,
+            replyRepository: ReplyRepositoryFirebase,
+            replyLikeRepository: ReplyLikeRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new ReplyLikeUsecase(
@@ -417,109 +419,109 @@ export class UseCaseProxyModule {
             ),
         },
         {
-          inject: [ReplyRepositoryOrm,ReplyLikeRepositoryOrm],
+          inject: [ReplyRepositoryFirebase,ReplyLikeRepositoryFirebase],
           provide: UseCaseProxyModule.GET_REPLY_LIKE_STATUS_USECASE,
-          useFactory: (replyRepository: ReplyRepositoryOrm,replyLikeRepository: ReplyLikeRepositoryOrm) =>
+          useFactory: (replyRepository: ReplyRepositoryFirebase,replyLikeRepository: ReplyLikeRepositoryFirebase) =>
             new UseCaseProxy(new GetReplyLikeStatusUsecase(replyRepository,replyLikeRepository)),
         },
         {
-          inject: [FollowRepositoryOrm, UserRepositoryOrm],
+          inject: [FollowRepositoryFirebase,  UserRepositoryFirebase],
           provide: UseCaseProxyModule.FOLLOW_USER_USECASE,
           useFactory: (
-            followRepository: FollowRepositoryOrm,
-            userRepository: UserRepositoryOrm,
+            followRepository: FollowRepositoryFirebase, 
+            userRepository: UserRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new FollowUserUseCase(followRepository, userRepository),
             ),
         },
         {
-          inject: [FollowRepositoryOrm, UserRepositoryOrm],
+          inject: [FollowRepositoryFirebase,  UserRepositoryFirebase],
           provide: UseCaseProxyModule.UNFOLLOW_USER_USECASE,
           useFactory: (
-            followRepository: FollowRepositoryOrm,
-            userRepository: UserRepositoryOrm,
+            followRepository: FollowRepositoryFirebase, 
+            userRepository: UserRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new UnfollowUserUseCase(followRepository, userRepository),
             ),
         },
         {
-          inject: [FollowRepositoryOrm],
+          inject: [FollowRepositoryFirebase] ,
           provide: UseCaseProxyModule.GET_USER_FOLLOW_STATUS_USECASE,
-          useFactory: (followRepository: FollowRepositoryOrm) =>
+          useFactory: (followRepository: FollowRepositoryFirebase)  =>
             new UseCaseProxy(new GetUserFollowStatusUsecase(followRepository)),
         },
         {
-          inject: [FollowRepositoryOrm],
+          inject: [FollowRepositoryFirebase] ,
           provide: UseCaseProxyModule.GET_USER_FOLLOWING_USECASE,
-          useFactory: (followRepository: FollowRepositoryOrm) =>
+          useFactory: (followRepository: FollowRepositoryFirebase)  =>
             new UseCaseProxy(new GetUserFollowingUseCase(followRepository)),
         },
         {
-          inject: [FollowRepositoryOrm],
+          inject: [FollowRepositoryFirebase] ,
           provide: UseCaseProxyModule.GET_USER_FOLLOWERS_USECASE,
-          useFactory: (followRepository: FollowRepositoryOrm) =>
+          useFactory: (followRepository: FollowRepositoryFirebase)  =>
             new UseCaseProxy(new GetUserFollowerUseCase(followRepository)),
         },
         {
-          inject: [MessageRepositoryOrm, UserRepositoryOrm],
+          inject: [MessageRepositoryFirebase, UserRepositoryFirebase],
           provide: UseCaseProxyModule.POST_MESSAGE_USECASE,
           useFactory: (
-            messageRepository: MessageRepositoryOrm,
-            userRepository: UserRepositoryOrm,
+            messageRepository: MessageRepositoryFirebase,
+            userRepository: UserRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new CreateMessageUsecase(userRepository, messageRepository),
             ),
         },
         {
-          inject: [MessageRepositoryOrm, UserRepositoryOrm],
+          inject: [MessageRepositoryFirebase, UserRepositoryFirebase],
           provide: UseCaseProxyModule.GET_MESSAGES_USECASE,
           useFactory: (
-            messageRepository: MessageRepositoryOrm,
-            userRepository: UserRepositoryOrm,
+            messageRepository: MessageRepositoryFirebase,
+            userRepository: UserRepositoryFirebase,
           ) =>
             new UseCaseProxy(
               new GetMessagesUsecase(messageRepository, userRepository),
             ),
         },
         {
-          inject: [UserRepositoryOrm],
+          inject: [UserRepositoryFirebase],
           provide: UseCaseProxyModule.EDIT_FCM_TOKEN_USECASE,
-          useFactory: (userRepository: UserRepositoryOrm) =>
+          useFactory: (userRepository: UserRepositoryFirebase) =>
             new UseCaseProxy(new EditFCMTokenUsecase(userRepository)),
         },
         {
-          inject:[UserRepositoryOrm],
+          inject:[UserRepositoryFirebase],
           provide:UseCaseProxyModule.DELETE_FCM_TOKEN_USECASE,
-          useFactory:(userRepository:UserRepositoryOrm)=> new UseCaseProxy(new DeleteFcmTokenUseCase(userRepository))
+          useFactory:(userRepository:UserRepositoryFirebase)=> new UseCaseProxy(new DeleteFcmTokenUseCase(userRepository))
         },
         {
-          inject:[SubscriptionRepositoryOrm],
+          inject:[SubscriptionRepositoryFirebase],
           provide:UseCaseProxyModule.GET_SUBSCRIPTION_USECASE,
-          useFactory:(subscriptionRepository:SubscriptionRepositoryOrm)=> new UseCaseProxy(new GetSubscriptionByOrderIdUseCase(subscriptionRepository))
+          useFactory:(subscriptionRepository:SubscriptionRepositoryFirebase)=> new UseCaseProxy(new GetSubscriptionByOrderIdUseCase(subscriptionRepository))
         },
         {
-          inject: [UserRepositoryOrm,SubscriptionRepositoryOrm],
+          inject: [UserRepositoryFirebase,SubscriptionRepositoryFirebase],
           provide: UseCaseProxyModule.POST_SUBSCRIPTION_USECASE,
-          useFactory: (userRepository: UserRepositoryOrm,subscriptionRepository: SubscriptionRepositoryOrm) =>
+          useFactory: (userRepository: UserRepositoryFirebase,subscriptionRepository: SubscriptionRepositoryFirebase) =>
             new UseCaseProxy(new PostSubscriptionUseCase(userRepository,subscriptionRepository)),
         },
         {
-          inject:[UserRepositoryOrm,SubscriptionRepositoryOrm],
+          inject:[UserRepositoryFirebase,SubscriptionRepositoryFirebase],
           provide:UseCaseProxyModule.HANDLE_EXPIRED_SUBSCRIPTION_USECASE,
-          useFactory:(userRepository:UserRepositoryOrm,subscriptionRepository:SubscriptionRepositoryOrm)=> new UseCaseProxy(new HandleExpiredSubscriptionUseCase(userRepository,subscriptionRepository))
+          useFactory:(userRepository:UserRepositoryFirebase,subscriptionRepository:SubscriptionRepositoryFirebase)=> new UseCaseProxy(new HandleExpiredSubscriptionUseCase(userRepository,subscriptionRepository))
         },
         {
-          inject:[PAYMENT_GATEWAY_TOKEN,SubscriptionRepositoryOrm],
+          inject:[PAYMENT_GATEWAY_TOKEN,SubscriptionRepositoryFirebase],
           provide:UseCaseProxyModule.CREATE_SUBSCRIPTION_PAYMENT_USECASE,
-          useFactory:(midtransService: IMidtrans,subscriptionRepository:SubscriptionRepositoryOrm  )=> new UseCaseProxy(new CreateSubcriptionPaymentUseCase(midtransService,subscriptionRepository))
+          useFactory:(midtransService: IMidtrans,subscriptionRepository:SubscriptionRepositoryFirebase  )=> new UseCaseProxy(new CreateSubcriptionPaymentUseCase(midtransService,subscriptionRepository))
         },
         {
-          inject:[SubscriptionRepositoryOrm,UserRepositoryOrm],
+          inject:[SubscriptionRepositoryFirebase,UserRepositoryFirebase],
           provide:UseCaseProxyModule.MIDTRANS_WEBHOOK_USECASE,
-          useFactory:(subscriptionRepository:SubscriptionRepositoryOrm,userRepository:UserRepositoryOrm)=> new UseCaseProxy(new MidtransWebHookUseCase(subscriptionRepository,userRepository))
+          useFactory:(subscriptionRepository:SubscriptionRepositoryFirebase,userRepository:UserRepositoryFirebase)=> new UseCaseProxy(new MidtransWebHookUseCase(subscriptionRepository,userRepository))
         },
       ],
       exports: [

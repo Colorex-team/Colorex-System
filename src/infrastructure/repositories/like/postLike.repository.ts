@@ -1,35 +1,54 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { PostLikeM } from '../../../domains/model/postLike';
-import { PostLikeRepository } from '../../../domains/repositories/like/postLike.repository';
-import { PostLike } from '../../../infrastructure/entities/postLike.entity';
-import { Repository } from 'typeorm';
+import { Injectable, Inject } from "@nestjs/common";
+import { PostLikeM } from "../../../domains/model/postLike";
+import { PostLikeRepository } from "../../../domains/repositories/like/postLike.repository";
+import { Firestore, FieldValue } from "firebase-admin/firestore";
 
 @Injectable()
-export class PostLikeRepositoryOrm implements PostLikeRepository {
+export class PostLikeRepositoryFirebase implements PostLikeRepository {
   constructor(
-    @InjectRepository(PostLike)
-    private readonly postLikeRepository: Repository<PostLike>,
+    @Inject('FIRESTORE') private readonly firestore: Firestore,
   ) {}
+
+  private get collection() {
+    return this.firestore.collection('postLikes');
+  }
+
+  // ✅ Create a post like and increment like count atomically
   async createPostLike(postLike: PostLikeM): Promise<void> {
-    await this.postLikeRepository.save(postLike);
-  }
-  async getPostLikeCount(postId: string): Promise<number> {
-    return this.postLikeRepository.count({ where: { post: { id: postId } } });
-  }
-
-  async verifyIsPostLiked(userId: string, postId: string): Promise<boolean> {
-    const postLike = await this.postLikeRepository.findOneBy({
-      user: { id: userId },
-      post: { id: postId },
+    const docId = `${postLike.user.id}_${postLike.post.id}`;
+    await this.collection.doc(docId).set({
+      userId: postLike.user.id,
+      postId: postLike.post.id,
+      createdAt: FieldValue.serverTimestamp(),
     });
-    return postLike ? true : false;
+
+    // Increment like count on post document
+    await this.firestore.collection('posts').doc(postLike.post.id).update({
+      likeCounts: FieldValue.increment(1),
+    });
   }
 
+  // ✅ Get total like count efficiently
+  async getPostLikeCount(postId: string): Promise<number> {
+    const doc = await this.firestore.collection('posts').doc(postId).get();
+    return doc.data()?.likeCounts ?? 0;
+  }
+
+  // ✅ Check if user already liked a post
+  async verifyIsPostLiked(userId: string, postId: string): Promise<boolean> {
+    const docId = `${userId}_${postId}`;
+    const doc = await this.collection.doc(docId).get();
+    return doc.exists;
+  }
+
+  // ✅ Delete like and decrement counter atomically
   async deletePostLike(userId: string, postId: string): Promise<void> {
-    await this.postLikeRepository.delete({
-      user: { id: userId },
-      post: { id: postId },
+    const docId = `${userId}_${postId}`;
+    await this.collection.doc(docId).delete();
+
+    // Decrement like count on post document
+    await this.firestore.collection('posts').doc(postId).update({
+      likeCounts: FieldValue.increment(-1),
     });
   }
 }

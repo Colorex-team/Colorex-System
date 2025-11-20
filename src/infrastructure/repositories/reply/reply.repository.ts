@@ -1,44 +1,91 @@
-import { Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
+import { Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { Firestore } from "firebase-admin/firestore";
 import { ReplyM } from "../../../domains/model/reply";
 import { ReplyRepository } from "../../../domains/repositories/reply/reply.repository";
-import { Reply } from "../../../infrastructure/entities/reply.entity";
-import { Repository } from "typeorm";
+import { firebaseNormalize } from '../../../commons/helper/firebaseNormalize'; 
+
 
 @Injectable()
-export class ReplyRepositoryOrm implements ReplyRepository {
+export class ReplyRepositoryFirebase implements ReplyRepository {
   constructor(
-    @InjectRepository(Reply) private readonly replyRepository: Repository<Reply>,
-  ){}
-  async createReply(reply: ReplyM): Promise<void> {
-    await this.replyRepository.save(reply);
+    @Inject('FIRESTORE') private readonly firestore: Firestore,
+  ) {}
+
+  private get collection() {
+    return this.firestore.collection('replies');
   }
+
+  // ✅ Create a new reply
+  async createReply(reply: ReplyM): Promise<void> {
+    const docRef = this.collection.doc(reply.id ?? undefined);
+    await docRef.set({
+      ...reply,
+      created_at: new Date(),
+      likeCounts : 0,
+    });
+  }
+
+  // ✅ Check if reply exists
   async verifyReplyAvailability(replyId: string): Promise<boolean> {
-    const reply = await this.replyRepository.findOne({where: {id: replyId}});
-    if(!reply) {
+    const doc = await this.collection.doc(replyId).get();
+    if (!doc.exists) {
       throw new NotFoundException('Reply not found');
     }
     return true;
   }
+
+  // ✅ Verify ownership of reply
   async verifyReplyOwnership(userId: string, replyId: string): Promise<boolean> {
-    const reply = await this.replyRepository.findOne({where: {id: replyId, user: {id: userId}}});
-    if(!reply) {
+    const doc = await this.collection.doc(replyId).get();
+
+    if (!doc.exists) {
+      throw new NotFoundException('Reply not found');
+    }
+
+    const replyData = doc.data();
+    if (replyData.userId !== userId) {
       throw new UnauthorizedException('You are not the owner of this reply');
     }
+
     return true;
   }
+
+  // ✅ Get all replies under a comment
   async getRepliesByCommentId(commentId: string): Promise<ReplyM[]> {
-    const replies = await this.replyRepository.find({where: {comment: {id: commentId}}});
-    return replies;
+    const snapshot = await this.collection.where('commentId', '==', commentId).get();
+
+    if (snapshot.empty) return [];
+    return firebaseNormalize(snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }))) as ReplyM[];
   }
-  async getReplyById(replyId: string): Promise<ReplyM> {
-    const reply = await this.replyRepository.findOne({where: {id: replyId}});
-    return reply;
+
+  // ✅ Get a single reply by ID
+  async getReplyById(replyId: string): Promise<ReplyM | null> {
+    const doc = await this.collection.doc(replyId).get();
+    if (!doc.exists) return null;
+    return firebaseNormalize({ id: doc.id, ...doc.data() }) as ReplyM;
   }
+
+  // ✅ Edit a reply
   async editReplyById(replyId: string, reply: Partial<ReplyM>): Promise<void> {
-    await this.replyRepository.update({id: replyId}, reply);
+    const docRef = this.collection.doc(replyId);
+    const doc = await docRef.get();
+
+    if (!doc.exists) throw new NotFoundException('Reply not found');
+    await docRef.update({
+      ...reply,
+      updated_at: new Date(),
+    });
   }
+
+  // ✅ Delete a reply
   async deleteReply(replyId: string): Promise<void> {
-    await this.replyRepository.delete({id: replyId});
+    const docRef = this.collection.doc(replyId);
+    const doc = await docRef.get();
+
+    if (!doc.exists) throw new NotFoundException('Reply not found');
+    await docRef.delete();
   }
 }

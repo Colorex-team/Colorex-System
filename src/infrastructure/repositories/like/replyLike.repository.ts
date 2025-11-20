@@ -1,36 +1,54 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { ReplyLikeM } from '../../../domains/model/replyLike';
-import { ReplyLikeRepository } from '../../../domains/repositories/like/replyLike.repository';
-import { ReplyLike } from '../../../infrastructure/entities/replyLike.entity';
-import { Repository } from 'typeorm';
+import { Injectable, Inject } from "@nestjs/common";
+import { ReplyLikeM } from "../../../domains/model/replyLike";
+import { ReplyLikeRepository } from "../../../domains/repositories/like/replyLike.repository";
+import { Firestore, FieldValue } from "firebase-admin/firestore";
 
 @Injectable()
-export class ReplyLikeRepositoryOrm implements ReplyLikeRepository {
+export class ReplyLikeRepositoryFirebase implements ReplyLikeRepository {
   constructor(
-    @InjectRepository(ReplyLike)
-    private readonly replyLikeRepository: Repository<ReplyLike>,
+    @Inject('FIRESTORE') private readonly firestore: Firestore,
   ) {}
-  async createReplyLike(replyLike: ReplyLikeM): Promise<void> {
-    await this.replyLikeRepository.save(replyLike);
-  }
-  async getReplyLikeCount(replyId: string): Promise<number> {
-    return this.replyLikeRepository.count({
-      where: { reply: { id: replyId } },
-    });
-  }
-  async verifyIsReplyLiked(userId: string, replyId: string): Promise<boolean> {
-    const commentLike = await this.replyLikeRepository.findOneBy({
-      user: { id: userId },
-      reply: { id: replyId },
-    });
-    return commentLike ? true : false;
+
+  private get collection() {
+    return this.firestore.collection('replyLikes');
   }
 
+  // ✅ Create a reply like and increment counter atomically
+  async createReplyLike(replyLike: ReplyLikeM): Promise<void> {
+    const docId = `${replyLike.user.id}_${replyLike.reply.id}`;
+    await this.collection.doc(docId).set({
+      userId: replyLike.user.id,
+      replyId: replyLike.reply.id,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    // increment reply like counter
+    await this.firestore.collection('replies').doc(replyLike.reply.id).update({
+      likeCounts: FieldValue.increment(1),
+    });
+  }
+
+  // ✅ Get the total like count from reply document
+  async getReplyLikeCount(replyId: string): Promise<number> {
+    const doc = await this.firestore.collection('replies').doc(replyId).get();
+    return doc.data()?.likeCounts ?? 0;
+  }
+
+  // ✅ Check if user already liked the reply
+  async verifyIsReplyLiked(userId: string, replyId: string): Promise<boolean> {
+    const docId = `${userId}_${replyId}`;
+    const doc = await this.collection.doc(docId).get();
+    return doc.exists;
+  }
+
+  // ✅ Delete a like and decrement the counter
   async deleteReplyLike(userId: string, replyId: string): Promise<void> {
-    await this.replyLikeRepository.delete({
-      user: { id: userId },
-      reply: { id: replyId },
+    const docId = `${userId}_${replyId}`;
+    await this.collection.doc(docId).delete();
+
+    // decrement reply like counter
+    await this.firestore.collection('replies').doc(replyId).update({
+      likeCounts: FieldValue.increment(-1),
     });
   }
 }
